@@ -292,6 +292,15 @@ def prepare_open_positions(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Main app flow
 # ---------------------------------------------------------------------------
+with st.expander("How to download your CSV from IBKR"):
+    st.markdown("""
+1. Log in to your **IBKR** account
+2. Click **Performance & Reports** in the top navigation
+3. Click the **Reports** tab in PortfolioAnalyst
+4. Find the **Since Inception** row under Default Reports
+5. Click the **CSV icon** (rightmost icon) to download
+""")
+
 uploaded_file = st.file_uploader(
     "Upload your IBKR PortfolioAnalyst CSV", type=["csv"]
 )
