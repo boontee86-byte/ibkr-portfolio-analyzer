@@ -131,6 +131,14 @@ st.markdown(f"""
     .stSidebar .stCheckbox label span {{
         color: {TEXT} !important;
     }}
+
+    /* ---- Expander (details/summary) dark mode fix ---- */
+    details, details summary, details div,
+    [data-testid="stExpander"], [data-testid="stExpander"] *,
+    .streamlit-expanderHeader, .streamlit-expanderContent {{
+        background-color: {BG} !important;
+        color: {TEXT} !important;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -292,8 +300,8 @@ def prepare_open_positions(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Main app flow
 # ---------------------------------------------------------------------------
-with st.expander("How to download your CSV from IBKR"):
-    st.markdown("""
+st.markdown("""
+**How to download your CSV from IBKR:**
 1. Log in to your **IBKR** account
 2. Click **Performance & Reports** in the top navigation
 3. Click the **Reports** tab in PortfolioAnalyst
