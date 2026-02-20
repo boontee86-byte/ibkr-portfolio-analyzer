@@ -135,6 +135,25 @@ st.markdown(f"""
         color: {TEXT} !important;
     }}
 
+    /* ---- Tab separator styling ---- */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 8px;
+        border-bottom: 2px solid {"#444" if dark else "#CCC"} !important;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        padding: 8px 20px;
+        border: 1px solid {"#444" if dark else "#CCC"} !important;
+        border-bottom: none !important;
+        border-radius: 6px 6px 0 0;
+        background-color: {"#1A1D23" if dark else "#F0F2F6"} !important;
+        color: {TEXT} !important;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background-color: {BG} !important;
+        border-bottom: 2px solid {BG} !important;
+        margin-bottom: -2px;
+    }}
+
     /* ---- Expander (details/summary) dark mode fix ---- */
     details, details summary, details div,
     [data-testid="stExpander"], [data-testid="stExpander"] *,
@@ -370,7 +389,7 @@ for line in raw_text.splitlines():
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs(["Open Position Summary", "Concentration — Holdings", "Allocation by Financial Instrument", "Performance"])
+tab1, tab2, tab3, tab4 = st.tabs(["Open Position Summary", "Concentration", "Allocation", "Performance"])
 
 # === Tab 1: Open Position Summary ==========================================
 with tab1:
@@ -570,9 +589,9 @@ with tab3:
             fig_alloc.add_trace(go.Bar(
                 name=inst,
                 x=df_alloc["DateLabel"],
-                y=df_alloc[inst].abs(),
+                y=df_alloc[inst],
                 marker=dict(color=color, line=dict(width=0)),
-                hovertemplate="%{y:,.0f}<extra></extra>",
+                hovertemplate=f"{inst}: %{{y:,.0f}}<extra></extra>",
             ))
 
         fig_alloc.update_layout(
