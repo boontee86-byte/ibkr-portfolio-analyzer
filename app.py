@@ -677,7 +677,7 @@ def xirr(cashflows):
 
     def npv(rate):
         return sum(
-            amt / (1 + rate) ** ((d - d0).days / 365.25)
+            amt / (1 + rate) ** ((d - d0).days / 365)
             for d, amt in cashflows
         )
 
