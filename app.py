@@ -802,9 +802,69 @@ with tab4:
                 "Cumulative MWR": cum_mwr,
             })
 
-        # --- Display table ---
+        # --- Display chart and table ---
         if results:
             st.subheader("Money Weighted Return (MWR)")
+
+            # --- Bar chart ---
+            labels = [r["Year"] for r in results]
+            yearly_vals = [r["Yearly MWR"] for r in results]
+            cum_vals = [r["Cumulative MWR"] for r in results]
+
+            # Bar colors: green for positive, red for negative
+            yearly_colors = ["#4CAF50" if v is not None and v >= 0 else "#EF5350" for v in yearly_vals]
+
+            fig_perf = go.Figure()
+            fig_perf.add_trace(go.Bar(
+                name="Yearly MWR",
+                x=labels,
+                y=[v * 100 if v is not None else 0 for v in yearly_vals],
+                marker=dict(color=yearly_colors, line=dict(width=0)),
+                hovertemplate="%{x}: %{y:.2f}%<extra>Yearly MWR</extra>",
+            ))
+            fig_perf.add_trace(go.Scatter(
+                name="Cumulative MWR",
+                x=labels,
+                y=[v * 100 if v is not None else 0 for v in cum_vals],
+                mode="lines+markers",
+                line=dict(color="#FFA726", width=2.5),
+                marker=dict(size=7, color="#FFA726"),
+                hovertemplate="%{x}: %{y:.2f}%<extra>Cumulative MWR</extra>",
+            ))
+            fig_perf.update_layout(
+                height=500,
+                paper_bgcolor=PLOT_PAPER,
+                plot_bgcolor=PLOT_BG,
+                font_color=PLOT_FONT,
+                hovermode="x unified",
+                legend=dict(
+                    font=dict(color=PLOT_FONT, size=13),
+                    orientation="h",
+                    yanchor="bottom", y=1.02,
+                    xanchor="center", x=0.5,
+                ),
+                xaxis=dict(
+                    type="category",
+                    tickfont=dict(color=PLOT_FONT, size=12),
+                    showline=True,
+                    linecolor="#444" if dark else "#CCC",
+                ),
+                yaxis=dict(
+                    title="Return (%)",
+                    showgrid=True,
+                    gridcolor="#222" if dark else "#EEE",
+                    tickfont=dict(color=PLOT_FONT),
+                    ticksuffix="%",
+                    showline=True,
+                    linecolor="#444" if dark else "#CCC",
+                    zeroline=True,
+                    zerolinecolor="#666" if dark else "#AAA",
+                    zerolinewidth=1,
+                ),
+                bargap=0.3,
+                margin=dict(t=40, b=40),
+            )
+            st.plotly_chart(fig_perf, use_container_width=True)
 
             perf_header = ""
             for col in ["Year", "Yearly MWR", "Cumulative MWR"]:
