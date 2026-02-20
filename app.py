@@ -1,7 +1,10 @@
 import csv
 import io
+from datetime import datetime, date
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from scipy.optimize import brentq
 import streamlit as st
 
 st.set_page_config(page_title="IBKR Portfolio Analyzer", layout="wide")
@@ -346,11 +349,28 @@ df_filtered = df_filtered.sort_values("ValueInBase", ascending=False).reset_inde
 
 df_conc = parse_concentration_holdings(raw_text)
 df_alloc = parse_section(raw_text, "Allocation by Financial Instrument")
+df_cashflows = parse_section(raw_text, "Deposits And Withdrawals")
+df_nav = parse_section(raw_text, "Allocation by Asset Class")
+
+# Extract the actual report end date from Key Statistics → Analysis Period
+report_end_date = None
+for line in raw_text.splitlines():
+    parts = line.split(",")
+    if len(parts) >= 4 and parts[0].strip() == "Key Statistics" and parts[1].strip() == "MetaInfo":
+        # Format: "September 14, 2017 - February 13, 2026"
+        period_str = ",".join(parts[2:]).strip().strip('"')
+        if " - " in period_str:
+            end_str = period_str.split(" - ")[1].strip()
+            try:
+                report_end_date = pd.to_datetime(end_str, format="%B %d, %Y")
+            except Exception:
+                report_end_date = pd.to_datetime(end_str)
+        break
 
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3 = st.tabs(["Open Position Summary", "Concentration — Holdings", "Allocation by Financial Instrument"])
+tab1, tab2, tab3, tab4 = st.tabs(["Open Position Summary", "Concentration — Holdings", "Allocation by Financial Instrument", "Performance"])
 
 # === Tab 1: Open Position Summary ==========================================
 with tab1:
@@ -642,3 +662,160 @@ with tab3:
         </div>
         """
         st.markdown(alloc_table, unsafe_allow_html=True)
+
+# === Tab 4: Performance =====================================================
+
+def xirr(cashflows):
+    """Calculate XIRR given a list of (date, amount) tuples.
+
+    Convention: negative = money going in (investment), positive = money coming out.
+    Returns the annualised rate of return.
+    """
+    if len(cashflows) < 2:
+        return None
+    d0 = min(cf[0] for cf in cashflows)
+
+    def npv(rate):
+        return sum(
+            amt / (1 + rate) ** ((d - d0).days / 365.25)
+            for d, amt in cashflows
+        )
+
+    try:
+        return brentq(npv, -0.999, 100.0, maxiter=10000)
+    except Exception:
+        return None
+
+
+with tab4:
+    if df_cashflows.empty or df_nav.empty or "NAV" not in df_nav.columns:
+        st.warning("Cash flow or NAV data not found in the uploaded file.")
+    else:
+        # --- Prepare cash flow data ---
+        df_cf = df_cashflows.copy()
+        df_cf["DateParsed"] = pd.to_datetime(df_cf["Date"], format="%m/%d/%y")
+        df_cf["Amount"] = pd.to_numeric(df_cf["Amount"], errors="coerce").fillna(0)
+        df_cf["Year"] = df_cf["DateParsed"].dt.year
+
+        # --- Prepare NAV data ---
+        df_n = df_nav[["Date", "NAV"]].copy()
+        df_n["NAV"] = pd.to_numeric(df_n["NAV"], errors="coerce")
+        df_n["DateParsed"] = pd.to_datetime(df_n["Date"].astype(str), format="%Y%m")
+        # Use last day of month for NAV date
+        df_n["DateParsed"] = df_n["DateParsed"] + pd.offsets.MonthEnd(0)
+        df_n = df_n.sort_values("DateParsed").reset_index(drop=True)
+        df_n["Year"] = df_n["DateParsed"].dt.year
+
+        inception_year = df_cf["Year"].min()
+        latest_nav_date = df_n["DateParsed"].max()
+        current_year = latest_nav_date.year
+        years = list(range(inception_year, current_year + 1))
+
+        # Build a lookup: last NAV for each year
+        nav_by_year = {}
+        for yr in years:
+            yr_navs = df_n[df_n["Year"] == yr]
+            if not yr_navs.empty:
+                row = yr_navs.iloc[-1]
+                nav_date = row["DateParsed"]
+                # For the current year, use actual report end date instead of month-end
+                if yr == current_year and report_end_date is not None:
+                    nav_date = report_end_date
+                nav_by_year[yr] = (nav_date, row["NAV"])
+
+        # --- Calculate MWR for each year and cumulative ---
+        results = []
+        for yr in years:
+            if yr not in nav_by_year:
+                continue
+
+            end_date, end_nav = nav_by_year[yr]
+
+            # --- Yearly MWR ---
+            # Beginning NAV = end of previous year's NAV (0 for inception year)
+            if yr == inception_year:
+                begin_nav = 0.0
+                begin_date = df_cf["DateParsed"].min()
+            else:
+                prev = nav_by_year.get(yr - 1)
+                if prev is None:
+                    continue
+                begin_date = prev[0]
+                begin_nav = prev[1]
+
+            # Cash flows for this year
+            yr_cf = df_cf[df_cf["Year"] == yr]
+
+            # Build XIRR cash flow list (investor perspective)
+            # Negative = money invested, positive = money received back
+            yearly_cfs = []
+            if begin_nav > 0:
+                yearly_cfs.append((begin_date, -begin_nav))
+            for _, row in yr_cf.iterrows():
+                yearly_cfs.append((row["DateParsed"], -row["Amount"]))
+            yearly_cfs.append((end_date, end_nav))
+
+            yearly_mwr = xirr(yearly_cfs)
+
+            # De-annualise YTD return for current year
+            if yr == current_year and yearly_mwr is not None:
+                t = (end_date - begin_date).days / 365.25
+                yearly_mwr = (1 + yearly_mwr) ** t - 1
+
+            # --- Cumulative MWR (since inception) ---
+            all_cf = df_cf[df_cf["DateParsed"] <= end_date]
+            cum_cfs = []
+            for _, row in all_cf.iterrows():
+                cum_cfs.append((row["DateParsed"], -row["Amount"]))
+            cum_cfs.append((end_date, end_nav))
+
+            cum_mwr = xirr(cum_cfs)
+
+            # Label
+            if yr == current_year:
+                label = f"{yr} YTD"
+            else:
+                label = str(yr)
+
+            results.append({
+                "Year": label,
+                "Yearly MWR": yearly_mwr,
+                "Cumulative MWR": cum_mwr,
+            })
+
+        # --- Display table ---
+        if results:
+            st.subheader("Money Weighted Return (MWR)")
+
+            perf_header = ""
+            for col in ["Year", "Yearly MWR", "Cumulative MWR"]:
+                perf_header += f"<th style='padding:8px 12px; text-align:{'left' if col == 'Year' else 'right'}; border-bottom:2px solid {TABLE_HEADER_BORDER}; color:{TEXT};'>{col}</th>"
+
+            perf_rows_html = ""
+            for r in results:
+                yr_val = r["Yearly MWR"]
+                cum_val = r["Cumulative MWR"]
+                yr_str = f"{yr_val:.2%}" if yr_val is not None else "N/A"
+                cum_str = f"{cum_val:.2%}" if cum_val is not None else "N/A"
+
+                # Color: green for positive, red for negative
+                yr_color = "#4CAF50" if yr_val is not None and yr_val >= 0 else "#EF5350"
+                cum_color = "#4CAF50" if cum_val is not None and cum_val >= 0 else "#EF5350"
+
+                perf_rows_html += f"""<tr>
+                    <td style='padding:6px 12px; text-align:left; border-bottom:1px solid {TABLE_ROW_BORDER}; color:{TEXT};'>{r['Year']}</td>
+                    <td style='padding:6px 12px; text-align:right; border-bottom:1px solid {TABLE_ROW_BORDER}; color:{yr_color}; font-weight:600;'>{yr_str}</td>
+                    <td style='padding:6px 12px; text-align:right; border-bottom:1px solid {TABLE_ROW_BORDER}; color:{cum_color}; font-weight:600;'>{cum_str}</td>
+                </tr>"""
+
+            perf_table = f"""
+            <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:15px; background-color:{BG};">
+            <thead><tr>{perf_header}</tr></thead>
+            <tbody>{perf_rows_html}</tbody>
+            </table>
+            </div>
+            """
+            st.markdown(perf_table, unsafe_allow_html=True)
+        else:
+            st.warning("Could not calculate performance — insufficient data.")
