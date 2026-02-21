@@ -210,8 +210,8 @@ def parse_section(raw_text: str, section_name: str) -> pd.DataFrame:
     columns = None
     rows = []
 
-    for line in raw_text.splitlines():
-        parts = line.split(",")
+    reader = csv.reader(io.StringIO(raw_text))
+    for parts in reader:
         if len(parts) < 3:
             continue
         row_section = parts[0].strip()
@@ -223,13 +223,19 @@ def parse_section(raw_text: str, section_name: str) -> pd.DataFrame:
         # The actual fields start at index 2
         fields = parts[2:]
 
-        if row_type == "Header":
+        if row_type == "Header" and columns is None:
             columns = [f.strip() for f in fields]
         elif row_type == "Data" and columns is not None:
             # Skip subtotal rows (Date column == "Total")
             if fields and fields[0].strip() == "Total":
                 continue
-            rows.append([f.strip() for f in fields])
+            # Pad or trim fields to match column count
+            cleaned = [f.strip() for f in fields]
+            if len(cleaned) < len(columns):
+                cleaned += [""] * (len(columns) - len(cleaned))
+            elif len(cleaned) > len(columns):
+                cleaned = cleaned[:len(columns)]
+            rows.append(cleaned)
 
     if columns is None or len(rows) == 0:
         return pd.DataFrame()
