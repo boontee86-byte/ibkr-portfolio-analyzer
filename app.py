@@ -395,7 +395,7 @@ for line in raw_text.splitlines():
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs(["Open Position Summary", "Concentration", "Allocation", "Performance"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Open Position Summary", "Concentration", "Allocation", "Performance", "Return"])
 
 # === Tab 1: Open Position Summary ==========================================
 with tab1:
@@ -904,3 +904,170 @@ with tab4:
             st.markdown(perf_table, unsafe_allow_html=True)
         else:
             st.warning("Could not calculate performance — insufficient data.")
+
+# === Tab 5: Return ===========================================================
+with tab5:
+    if df_cashflows.empty or df_nav.empty or "NAV" not in df_nav.columns:
+        st.warning("Cash flow or NAV data not found in the uploaded file.")
+    else:
+        # --- Prepare NAV data (monthly, end-of-month) ---
+        df_nav_ret = df_nav[["Date", "NAV"]].copy()
+        df_nav_ret["NAV"] = pd.to_numeric(df_nav_ret["NAV"], errors="coerce")
+        df_nav_ret["DateParsed"] = pd.to_datetime(df_nav_ret["Date"].astype(str), format="%Y%m")
+        df_nav_ret["DateParsed"] = df_nav_ret["DateParsed"] + pd.offsets.MonthEnd(0)
+        df_nav_ret = df_nav_ret.sort_values("DateParsed").reset_index(drop=True)
+
+        # --- Prepare deposit data ---
+        df_dep = df_cashflows.copy()
+        df_dep["DateParsed"] = pd.to_datetime(df_dep["Date"], format="%m/%d/%y")
+        df_dep["Amount"] = pd.to_numeric(df_dep["Amount"], errors="coerce").fillna(0)
+        df_dep["YearMonth"] = df_dep["DateParsed"].dt.to_period("M")
+
+        # ---------------------------------------------------------------
+        # Monthly Return
+        # ---------------------------------------------------------------
+        monthly_results = []
+        for i in range(len(df_nav_ret)):
+            end_date = df_nav_ret.iloc[i]["DateParsed"]
+            end_nav = df_nav_ret.iloc[i]["NAV"]
+            period = end_date.to_period("M")
+
+            # Beginning NAV = previous month's ending NAV (0 for first month)
+            begin_nav = df_nav_ret.iloc[i - 1]["NAV"] if i > 0 else 0.0
+
+            # Total deposits within this month
+            month_deps = df_dep[df_dep["YearMonth"] == period]["Amount"].sum()
+
+            monthly_return = end_nav - begin_nav - month_deps
+            monthly_results.append({
+                "Month": end_date.strftime("%Y/%m"),
+                "Beginning NAV": begin_nav,
+                "Deposits": month_deps,
+                "Ending NAV": end_nav,
+                "Return": monthly_return,
+            })
+
+        # ---------------------------------------------------------------
+        # Annual Return
+        # ---------------------------------------------------------------
+        df_nav_ret["Year"] = df_nav_ret["DateParsed"].dt.year
+        df_dep["Year"] = df_dep["DateParsed"].dt.year
+        years_ret = sorted(df_nav_ret["Year"].unique())
+
+        annual_results = []
+        for yr in years_ret:
+            yr_navs = df_nav_ret[df_nav_ret["Year"] == yr]
+            if yr_navs.empty:
+                continue
+
+            end_nav = yr_navs.iloc[-1]["NAV"]
+
+            # Beginning NAV = end of previous year (0 for first year)
+            prev_yr_navs = df_nav_ret[df_nav_ret["Year"] == yr - 1]
+            begin_nav = prev_yr_navs.iloc[-1]["NAV"] if not prev_yr_navs.empty else 0.0
+
+            # Total deposits for the year
+            year_deps = df_dep[df_dep["Year"] == yr]["Amount"].sum()
+
+            annual_return = end_nav - begin_nav - year_deps
+
+            label = f"{yr} YTD" if yr == years_ret[-1] else str(yr)
+            annual_results.append({
+                "Year": label,
+                "Beginning NAV": begin_nav,
+                "Deposits": year_deps,
+                "Ending NAV": end_nav,
+                "Return": annual_return,
+            })
+
+        # ---------------------------------------------------------------
+        # Display Monthly Return (first)
+        # ---------------------------------------------------------------
+        if monthly_results:
+            st.subheader("Monthly Return")
+
+            mon_labels = [r["Month"] for r in monthly_results]
+            mon_vals = [r["Return"] for r in monthly_results]
+            mon_colors = ["#4CAF50" if v >= 0 else "#EF5350" for v in mon_vals]
+
+            fig_mon = go.Figure()
+            fig_mon.add_trace(go.Bar(
+                x=mon_labels,
+                y=mon_vals,
+                marker=dict(color=mon_colors, line=dict(width=0)),
+                hovertemplate="%{x}: %{y:,.0f}<extra></extra>",
+            ))
+            fig_mon.update_layout(
+                height=450,
+                paper_bgcolor=PLOT_PAPER,
+                plot_bgcolor=PLOT_BG,
+                font_color=PLOT_FONT,
+                xaxis=dict(
+                    type="category",
+                    tickfont=dict(color=PLOT_FONT, size=10),
+                    showline=True,
+                    linecolor="#444" if dark else "#CCC",
+                    tickvals=[lbl for lbl in mon_labels if lbl.endswith("/01")],
+                    ticktext=[lbl[:4] for lbl in mon_labels if lbl.endswith("/01")],
+                ),
+                yaxis=dict(
+                    title="Return (Base Currency)",
+                    showgrid=True,
+                    gridcolor="#222" if dark else "#EEE",
+                    tickfont=dict(color=PLOT_FONT),
+                    tickformat=",.0f",
+                    showline=True,
+                    linecolor="#444" if dark else "#CCC",
+                    zeroline=True,
+                    zerolinecolor="#666" if dark else "#AAA",
+                    zerolinewidth=1,
+                ),
+                bargap=0.15,
+                margin=dict(t=40, b=40),
+            )
+            st.plotly_chart(fig_mon, use_container_width=True)
+
+        # ---------------------------------------------------------------
+        # Display Annual Return (second)
+        # ---------------------------------------------------------------
+        if annual_results:
+            st.subheader("Annual Return")
+
+            ann_labels = [r["Year"] for r in annual_results]
+            ann_vals = [r["Return"] for r in annual_results]
+            ann_colors = ["#4CAF50" if v >= 0 else "#EF5350" for v in ann_vals]
+
+            fig_ann = go.Figure()
+            fig_ann.add_trace(go.Bar(
+                x=ann_labels,
+                y=ann_vals,
+                marker=dict(color=ann_colors, line=dict(width=0)),
+                hovertemplate="%{x}: %{y:,.0f}<extra></extra>",
+            ))
+            fig_ann.update_layout(
+                height=450,
+                paper_bgcolor=PLOT_PAPER,
+                plot_bgcolor=PLOT_BG,
+                font_color=PLOT_FONT,
+                xaxis=dict(
+                    type="category",
+                    tickfont=dict(color=PLOT_FONT, size=12),
+                    showline=True,
+                    linecolor="#444" if dark else "#CCC",
+                ),
+                yaxis=dict(
+                    title="Return (Base Currency)",
+                    showgrid=True,
+                    gridcolor="#222" if dark else "#EEE",
+                    tickfont=dict(color=PLOT_FONT),
+                    tickformat=",.0f",
+                    showline=True,
+                    linecolor="#444" if dark else "#CCC",
+                    zeroline=True,
+                    zerolinecolor="#666" if dark else "#AAA",
+                    zerolinewidth=1,
+                ),
+                bargap=0.3,
+                margin=dict(t=40, b=40),
+            )
+            st.plotly_chart(fig_ann, use_container_width=True)
